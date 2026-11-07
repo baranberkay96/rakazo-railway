@@ -1,0 +1,621 @@
+{
+  "name": "Rakazo v0.8 Persistent AI Teammates",
+  "description": "Open-source AI teammates with memory, routines and their own computers.",
+  "category": "AI/ML",
+  "tags": [
+    "rakazo",
+    "ai-agents",
+    "ai-teammates",
+    "computer-use",
+    "sandboxes",
+    "self-hosted",
+    "postgres",
+    "grok-bot-alternative"
+  ],
+  "image": "https://cdn.jsdelivr.net/gh/elie222/rakazo@747ece9641dcc60c95467ffae8ab2311fb1f3f81/apps/web/public/icon-512.png",
+  "upstream": {
+    "repo": "elie222/rakazo",
+    "version": "v0.8.0 (GitHub release, 2026-11-04)",
+    "commit": "747ece9641dcc60c95467ffae8ab2311fb1f3f81",
+    "image": "ghcr.io/elie222/rakazo/app:v0.8.0@sha256:908045c3b393f4d948ea6bed9cd86ab77fd32d467d2fdfa042805b34c5b851ea (index; linux/amd64 sha256:bd8658b08be21316b2dd73d15d7ec8a9f166f82b044b6992a40ebb1a017dca05, linux/arm64 sha256:54ab3e99115c19989ea8e85d3c2cd0f99e9a19e956f82d5ef86ac159550ca1d3; built 2026-11-04, revision label = tag commit)",
+    "postgres": "ghcr.io/railwayapp-templates/postgres-ssl:18 (Railway base service)",
+    "checked": "2026-11-07"
+  },
+  "services": {
+    "Web": {
+      "icon": "https://cdn.jsdelivr.net/gh/elie222/rakazo@747ece9641dcc60c95467ffae8ab2311fb1f3f81/apps/web/public/icon-512.png",
+      "source": {
+        "image": "ghcr.io/elie222/rakazo/app:v0.8.0@sha256:908045c3b393f4d948ea6bed9cd86ab77fd32d467d2fdfa042805b34c5b851ea"
+      },
+      "startCommand": "/bin/sh -c 'cd /app/apps/web && exec node_modules/.bin/vite preview --host :: --port \"${PORT:-5173}\"'",
+      "preDeployCommand": null,
+      "healthcheckPath": "/",
+      "healthcheckTimeout": 300,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": true,
+      "targetPort": 5173,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "PORT": {
+          "defaultValue": "5173",
+          "description": "Port of the web app (Vite preview server). The public domain and Railway's healthcheck use it; keep 5173.",
+          "required": false
+        },
+        "NODE_ENV": {
+          "defaultValue": "production",
+          "description": "Runtime mode.",
+          "required": false
+        },
+        "RAKAZO_HOST": {
+          "defaultValue": "${{RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Hostname the web server answers to. After attaching a custom domain, set it to that hostname (no https://).",
+          "required": false
+        },
+        "RAKAZO_ALLOWED_HOSTS": {
+          "defaultValue": "healthcheck.railway.app",
+          "description": "Extra hostnames the web server accepts, comma-separated. Keep healthcheck.railway.app so Railway's healthcheck passes.",
+          "required": false
+        },
+        "API_PROXY_TARGET": {
+          "defaultValue": "http://${{API.RAILWAY_PRIVATE_DOMAIN}}:${{API.PORT}}",
+          "description": "Private address of the API. The web server forwards /api and /rpc there, so the API has no public domain.",
+          "required": false
+        },
+        "SCREEN_PROXY_SECRET": {
+          "defaultValue": "${{API.SCREEN_PROXY_SECRET}}",
+          "description": "Shared with the API: signs the links that open a bot computer's live screen.",
+          "required": false
+        },
+        "RAYON_NUM_THREADS": {
+          "defaultValue": "4",
+          "description": "Threads the Vite preview server uses to bundle its config at start (it would otherwise start one per host CPU).",
+          "required": false
+        },
+        "RAKAZO_IMAGE_TAG": {
+          "defaultValue": "v0.8.0",
+          "description": "Version label the web app reports. Informational; the image digest decides the version.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "30",
+          "description": "Seconds open requests get to finish when a redeploy replaces the web server.",
+          "required": false
+        }
+      }
+    },
+    "API": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/server.svg",
+      "source": {
+        "repo": "baranberkay96/rakazo-railway",
+        "rootDirectory": "/services/rakazo"
+      },
+      "startCommand": "/opt/rakazo-railway/rakazo-railway api",
+      "preDeployCommand": "/opt/rakazo-railway/rakazo-railway predeploy",
+      "preDeployTimeoutSeconds": 1200,
+      "healthcheckPath": "/ready",
+      "healthcheckTimeout": 600,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "OWNER_EMAIL": {
+          "defaultValue": "",
+          "description": "Your email. Before the app goes online, an account with this email and OWNER_PASSWORD is created. Public sign-up stays closed.",
+          "required": true
+        },
+        "OWNER_PASSWORD": {
+          "defaultValue": "${{secret(32)}}",
+          "description": "Generated password for OWNER_EMAIL (16+ characters). Copy it from here to sign in; change it in account settings. Later edits do not reset it.",
+          "required": false
+        },
+        "SIGNUPS_ENABLED": {
+          "defaultValue": "false",
+          "description": "Public sign-up. false keeps this a private install; true with SIGNUP_ALLOWLIST lets listed emails register (needs email set up).",
+          "required": false
+        },
+        "PORT": {
+          "defaultValue": "3100",
+          "description": "Port the API listens on; Railway's healthcheck (GET /ready) uses it. Keep equal to API_PORT.",
+          "required": false
+        },
+        "API_PORT": {
+          "defaultValue": "3100",
+          "description": "Port the API listens on (upstream variable). Keep equal to PORT.",
+          "required": false
+        },
+        "API_HOST": {
+          "defaultValue": "::",
+          "description": "Listen address. :: answers on the private network over IPv4 and IPv6; the API has no public domain.",
+          "required": false
+        },
+        "NODE_ENV": {
+          "defaultValue": "production",
+          "description": "Runtime mode.",
+          "required": false
+        },
+        "RAKAZO_PUBLIC_ORIGIN": {
+          "defaultValue": "https://${{Web.RAILWAY_PUBLIC_DOMAIN}}",
+          "description": "Public HTTPS address of the app. After attaching a custom domain to Web, set https://{your-domain} here and RAKAZO_HOST on Web.",
+          "required": false
+        },
+        "BETTER_AUTH_URL": {
+          "defaultValue": "${{RAKAZO_PUBLIC_ORIGIN}}",
+          "description": "Sign-in origin (upstream variable). Follows RAKAZO_PUBLIC_ORIGIN.",
+          "required": false
+        },
+        "WEB_ORIGIN": {
+          "defaultValue": "${{RAKAZO_PUBLIC_ORIGIN}}",
+          "description": "Web app origin for cookies, CORS and passkeys (upstream variable). Follows RAKAZO_PUBLIC_ORIGIN.",
+          "required": false
+        },
+        "API_URL": {
+          "defaultValue": "${{RAKAZO_PUBLIC_ORIGIN}}",
+          "description": "Public base URL used in links and webhooks (upstream variable). Follows RAKAZO_PUBLIC_ORIGIN.",
+          "required": false
+        },
+        "TRUSTED_PROXIES": {
+          "defaultValue": "${{Web.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "Only the Web service may report a client address, so sign-in rate limits and logs see the real visitor.",
+          "required": false
+        },
+        "CLIENT_IP_HEADER": {
+          "defaultValue": "x-real-ip",
+          "description": "Header with the visitor's address: Railway's edge sets X-Real-IP and the Web service passes it on unchanged.",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgres://rakazo_app:${{RAKAZO_DB_APP_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{Postgres.PGDATABASE}}",
+          "description": "App login (rakazo_app, row-level security enforced). Created by the pre-deploy migration.",
+          "required": false
+        },
+        "RAKAZO_DB_APP_PASSWORD": {
+          "defaultValue": "${{secret(32, \"abcdef0123456789\")}}",
+          "description": "Password of the rakazo_app login, generated at deploy (hex, URL-safe). A change applies on the next deploy.",
+          "required": false
+        },
+        "DATABASE_MIGRATION_URL": {
+          "defaultValue": "${{Postgres.DATABASE_URL}}",
+          "description": "Database owner, used only by the pre-deploy step (migrations, app login). Removed from the API's environment before it starts.",
+          "required": false
+        },
+        "ENCRYPTION_KEY": {
+          "defaultValue": "${{secret(64, \"abcdef0123456789\")}}",
+          "description": "Encrypts stored credentials, chat content and files. Generated at deploy. Back it up and never change it: data cannot be read without it.",
+          "required": false
+        },
+        "CONTENT_ENCRYPTION": {
+          "defaultValue": "on",
+          "description": "on encrypts messages, memory and files at rest (upstream default for servers); off stores new content readable.",
+          "required": false
+        },
+        "BETTER_AUTH_SECRET": {
+          "defaultValue": "${{secret(64)}}",
+          "description": "Signs sessions. Generated at deploy; changing it signs everyone out.",
+          "required": false
+        },
+        "SCREEN_PROXY_SECRET": {
+          "defaultValue": "${{secret(64)}}",
+          "description": "Signs links to a bot computer's live screen. Generated at deploy; Web reads it from here.",
+          "required": false
+        },
+        "DATA_DIR": {
+          "defaultValue": "/data",
+          "description": "Local cache and staging folder. Bot homes and files are stored in the Bucket, so no volume is needed.",
+          "required": false
+        },
+        "OBJECT_STORAGE_BUCKET": {
+          "defaultValue": "${{Bucket.BUCKET}}",
+          "description": "Railway Bucket for bot computer homes and files (encrypted before upload). Shared by API and Worker.",
+          "required": false
+        },
+        "OBJECT_STORAGE_ENDPOINT": {
+          "defaultValue": "${{Bucket.ENDPOINT}}",
+          "description": "S3 endpoint of the Railway Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_REGION": {
+          "defaultValue": "${{Bucket.REGION}}",
+          "description": "Region of the Railway Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_ACCESS_KEY_ID": {
+          "defaultValue": "${{Bucket.ACCESS_KEY_ID}}",
+          "description": "Access key of the Railway Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_SECRET_ACCESS_KEY": {
+          "defaultValue": "${{Bucket.SECRET_ACCESS_KEY}}",
+          "description": "Secret key of the Railway Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_PATH_STYLE": {
+          "defaultValue": "false",
+          "description": "Railway Buckets use virtual-hosted-style URLs.",
+          "required": false
+        },
+        "AGENT_RUNTIME": {
+          "defaultValue": "pi",
+          "description": "Agent runtime (upstream default).",
+          "required": false
+        },
+        "WAKEUP_DRIVER": {
+          "defaultValue": "graphile",
+          "description": "Job queue in Postgres (Graphile Worker); no Redis needed.",
+          "required": false
+        },
+        "SANDBOX_PROVIDER": {
+          "defaultValue": "railway",
+          "description": "Where bot computers run: railway (needs RAILWAY_API_TOKEN), e2b, daytona, boat, or none. Without the matching key, computers stay off and chat works.",
+          "required": false
+        },
+        "RAILWAY_API_TOKEN": {
+          "defaultValue": "",
+          "description": "Optional. Railway WORKSPACE token for bot computers as Railway sandboxes (billed to that workspace). It can manage every project in the workspace: use a dedicated one.",
+          "required": false
+        },
+        "RAILWAY_SANDBOX_REGION": {
+          "defaultValue": "",
+          "description": "Optional Railway region for new computers. Empty = Railway's default (US West).",
+          "required": false
+        },
+        "RAILWAY_SANDBOX_ENVIRONMENT_ID": {
+          "defaultValue": "",
+          "description": "Advanced. Existing empty environment for computers. Empty = an environment named sbx-... is created in this project. Never this app's environment.",
+          "required": false
+        },
+        "E2B_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional. E2B key, used when SANDBOX_PROVIDER=e2b.",
+          "required": false
+        },
+        "DAYTONA_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional. Daytona key, used when SANDBOX_PROVIDER=daytona.",
+          "required": false
+        },
+        "BOAT_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional. Boat (boat.dev) key, used when SANDBOX_PROVIDER=boat.",
+          "required": false
+        },
+        "SANDBOX_IDLE_MS": {
+          "defaultValue": "600000",
+          "description": "A computer stops after this many idle milliseconds (10 minutes); its files are saved first. Paid computers stop billing when stopped.",
+          "required": false
+        },
+        "COMPUTER_MAX_ACTIVE_MS": {
+          "defaultValue": "7200000",
+          "description": "Longest uninterrupted run of a paid computer (2 hours) unless a run or person is using it. 0 turns the cap off.",
+          "required": false
+        },
+        "SANDBOX_MAX_COMPUTERS_PER_USER": {
+          "defaultValue": "3",
+          "description": "Most computers one user's bots may have (cost guard). 0 = no cap.",
+          "required": false
+        },
+        "OPENROUTER_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional deployment model key (OpenRouter). Leave empty to connect a model in Settings, Models after signing in.",
+          "required": false
+        },
+        "ANTHROPIC_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional deployment model key, used with PI_DEFAULT_PROVIDER=anthropic.",
+          "required": false
+        },
+        "PI_DEFAULT_PROVIDER": {
+          "defaultValue": "",
+          "description": "Optional deployment model provider: openrouter (default when empty), anthropic or deepseek.",
+          "required": false
+        },
+        "PI_DEFAULT_MODEL": {
+          "defaultValue": "",
+          "description": "Optional deployment model id. Empty uses the provider's upstream default. Pick a vision model so screen tools work.",
+          "required": false
+        },
+        "COMPOSIO_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional Composio key for connected apps (Gmail, Slack, GitHub and more).",
+          "required": false
+        },
+        "EMAIL_PROVIDER": {
+          "defaultValue": "",
+          "description": "Optional: resend to send password-reset and sign-in emails over Resend's HTTP API.",
+          "required": false
+        },
+        "EMAIL_API_KEY": {
+          "defaultValue": "",
+          "description": "Optional Resend sending key (domain-restricted), with EMAIL_PROVIDER=resend.",
+          "required": false
+        },
+        "EMAIL_FROM": {
+          "defaultValue": "",
+          "description": "Optional sender, for example Rakazo <hello@mail.example.com>, on a domain verified at the email provider.",
+          "required": false
+        },
+        "LOG_LEVEL": {
+          "defaultValue": "info",
+          "description": "Log verbosity: debug, info, warn, error or off.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "120",
+          "description": "Seconds the old API gets to finish requests and chat replies when a redeploy replaces it.",
+          "required": false
+        }
+      }
+    },
+    "Worker": {
+      "icon": "https://cdn.jsdelivr.net/npm/lucide-static@1.59.0/icons/workflow.svg",
+      "source": {
+        "repo": "baranberkay96/rakazo-railway",
+        "rootDirectory": "/services/rakazo"
+      },
+      "startCommand": "/opt/rakazo-railway/rakazo-railway worker",
+      "preDeployCommand": null,
+      "healthcheckPath": null,
+      "healthcheckTimeout": null,
+      "restartPolicyType": "ALWAYS",
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": null,
+      "variables": {
+        "NODE_ENV": {
+          "defaultValue": "production",
+          "description": "Runtime mode.",
+          "required": false
+        },
+        "RAKAZO_API_READY_URL": {
+          "defaultValue": "http://${{API.RAILWAY_PRIVATE_DOMAIN}}:${{API.PORT}}/ready",
+          "description": "The worker waits (up to 15 minutes) until the API answers here, so the schema is migrated before jobs start.",
+          "required": false
+        },
+        "DATABASE_URL": {
+          "defaultValue": "${{API.DATABASE_URL}}",
+          "description": "Same app login as the API (row-level security enforced).",
+          "required": false
+        },
+        "ENCRYPTION_KEY": {
+          "defaultValue": "${{API.ENCRYPTION_KEY}}",
+          "description": "Same key as the API.",
+          "required": false
+        },
+        "CONTENT_ENCRYPTION": {
+          "defaultValue": "${{API.CONTENT_ENCRYPTION}}",
+          "description": "Same setting as the API.",
+          "required": false
+        },
+        "API_URL": {
+          "defaultValue": "${{API.API_URL}}",
+          "description": "Public base URL used in links the worker sends.",
+          "required": false
+        },
+        "DATA_DIR": {
+          "defaultValue": "/data",
+          "description": "Local cache and staging folder; homes and files live in the Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_BUCKET": {
+          "defaultValue": "${{Bucket.BUCKET}}",
+          "description": "Same Railway Bucket as the API.",
+          "required": false
+        },
+        "OBJECT_STORAGE_ENDPOINT": {
+          "defaultValue": "${{Bucket.ENDPOINT}}",
+          "description": "S3 endpoint of the Railway Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_REGION": {
+          "defaultValue": "${{Bucket.REGION}}",
+          "description": "Region of the Railway Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_ACCESS_KEY_ID": {
+          "defaultValue": "${{Bucket.ACCESS_KEY_ID}}",
+          "description": "Access key of the Railway Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_SECRET_ACCESS_KEY": {
+          "defaultValue": "${{Bucket.SECRET_ACCESS_KEY}}",
+          "description": "Secret key of the Railway Bucket.",
+          "required": false
+        },
+        "OBJECT_STORAGE_PATH_STYLE": {
+          "defaultValue": "${{API.OBJECT_STORAGE_PATH_STYLE}}",
+          "description": "Same setting as the API.",
+          "required": false
+        },
+        "AGENT_RUNTIME": {
+          "defaultValue": "${{API.AGENT_RUNTIME}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "WAKEUP_DRIVER": {
+          "defaultValue": "${{API.WAKEUP_DRIVER}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "SANDBOX_PROVIDER": {
+          "defaultValue": "${{API.SANDBOX_PROVIDER}}",
+          "description": "Same computer provider as the API (routines use computers too). Change it on the API.",
+          "required": false
+        },
+        "RAILWAY_API_TOKEN": {
+          "defaultValue": "${{API.RAILWAY_API_TOKEN}}",
+          "description": "Same token as the API. Set it on the API.",
+          "required": false
+        },
+        "RAILWAY_SANDBOX_REGION": {
+          "defaultValue": "${{API.RAILWAY_SANDBOX_REGION}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "RAILWAY_SANDBOX_ENVIRONMENT_ID": {
+          "defaultValue": "${{API.RAILWAY_SANDBOX_ENVIRONMENT_ID}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "E2B_API_KEY": {
+          "defaultValue": "${{API.E2B_API_KEY}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "DAYTONA_API_KEY": {
+          "defaultValue": "${{API.DAYTONA_API_KEY}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "BOAT_API_KEY": {
+          "defaultValue": "${{API.BOAT_API_KEY}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "SANDBOX_IDLE_MS": {
+          "defaultValue": "${{API.SANDBOX_IDLE_MS}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "COMPUTER_MAX_ACTIVE_MS": {
+          "defaultValue": "${{API.COMPUTER_MAX_ACTIVE_MS}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "SANDBOX_MAX_COMPUTERS_PER_USER": {
+          "defaultValue": "${{API.SANDBOX_MAX_COMPUTERS_PER_USER}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "OPENROUTER_API_KEY": {
+          "defaultValue": "${{API.OPENROUTER_API_KEY}}",
+          "description": "Same as the API (routines run here).",
+          "required": false
+        },
+        "ANTHROPIC_API_KEY": {
+          "defaultValue": "${{API.ANTHROPIC_API_KEY}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "PI_DEFAULT_PROVIDER": {
+          "defaultValue": "${{API.PI_DEFAULT_PROVIDER}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "PI_DEFAULT_MODEL": {
+          "defaultValue": "${{API.PI_DEFAULT_MODEL}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "COMPOSIO_API_KEY": {
+          "defaultValue": "${{API.COMPOSIO_API_KEY}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "LOG_LEVEL": {
+          "defaultValue": "${{API.LOG_LEVEL}}",
+          "description": "Same as the API.",
+          "required": false
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "2700",
+          "description": "Up to 45 minutes for running routines and background jobs to finish on redeploy (upstream's drain limit). It ends as soon as they finish.",
+          "required": false
+        }
+      }
+    },
+    "Postgres": {
+      "icon": "https://devicons.railway.app/i/postgresql.svg",
+      "source": {
+        "image": "ghcr.io/railwayapp-templates/postgres-ssl:18"
+      },
+      "startCommand": null,
+      "preDeployCommand": null,
+      "healthcheckPath": null,
+      "healthcheckTimeout": null,
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10,
+      "numReplicas": 1,
+      "cronSchedule": null,
+      "publicDomain": false,
+      "targetPort": null,
+      "tcpProxy": null,
+      "volume": {
+        "mountPath": "/var/lib/postgresql/data"
+      },
+      "variables": {
+        "PGDATA": {
+          "defaultValue": "/var/lib/postgresql/data/pgdata",
+          "description": "Location where the database is initialized (inside the volume).",
+          "required": true
+        },
+        "PGHOST": {
+          "defaultValue": "${{RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "Railway private domain name.",
+          "required": true
+        },
+        "PGPORT": {
+          "defaultValue": "5432",
+          "description": "Port to connect to Postgres.",
+          "required": true
+        },
+        "PGUSER": {
+          "defaultValue": "${{POSTGRES_USER}}",
+          "description": "Database owner, for the Data panel and the migrations.",
+          "required": true
+        },
+        "PGDATABASE": {
+          "defaultValue": "${{POSTGRES_DB}}",
+          "description": "Database for the Data panel and the app.",
+          "required": true
+        },
+        "PGPASSWORD": {
+          "defaultValue": "${{POSTGRES_PASSWORD}}",
+          "description": "Owner password for the Data panel.",
+          "required": true
+        },
+        "POSTGRES_DB": {
+          "defaultValue": "railway",
+          "description": "Database created on first boot.",
+          "required": true
+        },
+        "DATABASE_URL": {
+          "defaultValue": "postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}}",
+          "description": "Owner connection string on the private network. Only the API's pre-deploy step uses it.",
+          "required": true
+        },
+        "POSTGRES_USER": {
+          "defaultValue": "postgres",
+          "description": "Owner (superuser) created on first boot.",
+          "required": true
+        },
+        "SSL_CERT_DAYS": {
+          "defaultValue": "820",
+          "description": "Validity of the self-signed TLS certificate in days.",
+          "required": false
+        },
+        "POSTGRES_PASSWORD": {
+          "defaultValue": "${{ secret(32, \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\") }}",
+          "description": "Owner password, generated at deploy (letters only, URL-safe).",
+          "required": true
+        },
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS": {
+          "defaultValue": "60",
+          "description": "Time Postgres gets to shut down cleanly on redeploy.",
+          "required": false
+        }
+      }
+    }
+  },
+  "buckets": [
+    "Bucket"
+  ]
+}

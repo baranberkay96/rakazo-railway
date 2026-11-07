@@ -1,0 +1,256 @@
+#!/bin/sh
+# Railway start wrapper for the Rakazo v0.8.0 API and worker (community template, not upstream).
+#
+#   rakazo-railway predeploy   migrations as the database owner, then the private owner account
+#   rakazo-railway api         the API server (Railway healthcheck: GET /ready on PORT)
+#   rakazo-railway worker      the background worker (waits for the API first)
+#
+# The container starts as root only to prepare. Every Rakazo process runs as the image's `node`
+# user, and the API and worker never receive the owner database URL or the owner password: they
+# are removed from the environment before the exec, and PID 1 (Railway's init, root) is not
+# readable by `node`.
+#
+# Railway computers (SANDBOX_PROVIDER=railway with RAILWAY_API_TOKEN) are created in a separate,
+# empty environment of this project, never in the application's own environment, because a
+# sandbox with private networking joins its environment's private network (Postgres, API).
+# The environment is found or created by upstream's own script shipped in the image; the API and
+# the worker give it the same seed, so they always land on the same environment.
+set -eu
+umask 077
+
+HERE=/opt/rakazo-railway
+APP=/app
+SANDBOX_ENV_SCRIPT=$APP/infra/railway/sandbox-environment.mjs
+RUN_AS=node
+RUN_HOME=/home/node
+
+# Optional keys: an empty value is removed, so it reads as "not configured" everywhere.
+OPTIONAL_KEYS="OPENROUTER_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY DEEPSEEK_API_KEY
+PI_DEFAULT_PROVIDER PI_DEFAULT_MODEL COMPOSIO_API_KEY E2B_API_KEY DAYTONA_API_KEY
+DAYTONA_API_URL DAYTONA_TARGET DAYTONA_SNAPSHOT BOAT_API_KEY BOAT_API_URL RAILWAY_API_TOKEN
+RAILWAY_SANDBOX_REGION RAILWAY_SANDBOX_ENVIRONMENT_ID RAKAZO_SANDBOX_SCOPE
+EMAIL_PROVIDER EMAIL_API_KEY EMAIL_FROM SMTP_URL"
+
+log() { printf '[rakazo-railway] %s\n' "$*" >&2; }
+die() {
+  log "error: $*"
+  exit 1
+}
+
+is_root() { [ "$(id -u)" = 0 ]; }
+
+# Runs a command as `node` (or as the current user when not started as root).
+as_node() {
+  if is_root; then
+    setpriv --reuid="$RUN_AS" --regid="$RUN_AS" --init-groups --no-new-privs -- \
+      env HOME="$RUN_HOME" USER="$RUN_AS" LOGNAME="$RUN_AS" "$@"
+  else
+    "$@"
+  fi
+}
+
+exec_as_node() {
+  if is_root; then
+    exec setpriv --reuid="$RUN_AS" --regid="$RUN_AS" --init-groups --no-new-privs -- \
+      env HOME="$RUN_HOME" USER="$RUN_AS" LOGNAME="$RUN_AS" "$@"
+  fi
+  exec "$@"
+}
+
+unset_empty_optional() {
+  for name in $OPTIONAL_KEYS; do
+    eval "value=\${$name-}"
+    if [ -z "$value" ]; then unset "$name"; fi
+  done
+  value=
+}
+
+# retry <attempts> <delay seconds> <label> <command...>
+retry() {
+  attempts=$1
+  delay=$2
+  label=$3
+  shift 3
+  n=1
+  while :; do
+    if "$@"; then return 0; fi
+    if [ "$n" -ge "$attempts" ]; then
+      log "$label failed $n times, giving up"
+      return 1
+    fi
+    log "$label failed (attempt $n/$attempts), retrying in $delay s"
+    n=$((n + 1))
+    sleep "$delay"
+  done
+}
+
+positive_int() {
+  case ${1-} in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge 1 ]
+}
+
+# Railway ids are lowercase UUIDs.
+railway_id() {
+  case ${1-} in
+    '' | *[!0-9a-f-]*) return 1 ;;
+  esac
+  [ ${#1} -eq 36 ]
+}
+
+disable_railway_computers() {
+  log "error: Railway computers are OFF: $1"
+  log "chat keeps working; fix RAILWAY_API_TOKEN (a workspace token) on the API service and redeploy API and Worker"
+  export SANDBOX_PROVIDER=none
+  unset RAILWAY_API_TOKEN RAILWAY_SANDBOX_ENVIRONMENT_ID
+}
+
+# Sets RAILWAY_ENVIRONMENT_ID to the separate sandbox environment, or turns Railway computers off.
+resolve_sandbox_environment() {
+  if [ "${SANDBOX_PROVIDER-}" != railway ]; then
+    # Another provider (or none): the Railway token has no use in this process.
+    unset RAILWAY_API_TOKEN RAILWAY_SANDBOX_ENVIRONMENT_ID
+    log "computers: SANDBOX_PROVIDER=${SANDBOX_PROVIDER:-unset}"
+    return 0
+  fi
+  if [ -z "${RAILWAY_API_TOKEN-}" ]; then
+    export SANDBOX_PROVIDER=none
+    unset RAILWAY_SANDBOX_ENVIRONMENT_ID
+    log "computers: off until RAILWAY_API_TOKEN is set (or another provider is chosen); chat works without them"
+    return 0
+  fi
+  app_environment=${RAILWAY_ENVIRONMENT_ID-}
+  if ! railway_id "$app_environment"; then
+    disable_railway_computers "RAILWAY_ENVIRONMENT_ID of this service is missing (not running on Railway?)"
+    return 0
+  fi
+  sandbox_environment=
+  if [ -n "${RAILWAY_SANDBOX_ENVIRONMENT_ID-}" ]; then
+    sandbox_environment=$RAILWAY_SANDBOX_ENVIRONMENT_ID
+    log "computers: using RAILWAY_SANDBOX_ENVIRONMENT_ID"
+  else
+    if ! railway_id "${RAILWAY_PROJECT_ID-}"; then
+      disable_railway_computers "RAILWAY_PROJECT_ID of this service is missing"
+      return 0
+    fi
+    # Upstream names the environment sbx-<sha256("<RAILWAY_SERVICE_ID>:<environment id>")>. The API
+    # and the worker are two services here, so both pass the same seed (the project id) instead,
+    # which gives every application environment of this project its own sandbox environment.
+    scope=${RAKAZO_SANDBOX_SCOPE:-$RAILWAY_PROJECT_ID}
+    case $scope in
+      '' | *[!A-Za-z0-9_-]*)
+        disable_railway_computers "RAKAZO_SANDBOX_SCOPE may only hold letters, digits, - and _"
+        return 0
+        ;;
+    esac
+    attempts=${RAKAZO_SANDBOX_ENV_ATTEMPTS:-3}
+    positive_int "$attempts" || attempts=3
+    n=1
+    while :; do
+      if sandbox_environment=$(as_node env RAILWAY_SERVICE_ID="$scope" node "$SANDBOX_ENV_SCRIPT"); then
+        break
+      fi
+      sandbox_environment=
+      if [ "$n" -ge "$attempts" ]; then break; fi
+      log "sandbox environment lookup failed (attempt $n/$attempts), retrying in 10 s"
+      n=$((n + 1))
+      sleep 10
+    done
+    # Look it up once more: if the API and the worker both created one at the same moment, the
+    # lookup returns the same (first listed) environment to both.
+    if railway_id "$sandbox_environment" &&
+      again=$(as_node env RAILWAY_SERVICE_ID="$scope" node "$SANDBOX_ENV_SCRIPT") &&
+      railway_id "$again" && [ "$again" != "$sandbox_environment" ]; then
+      log "computers: another process created the sandbox environment too; using the first listed one"
+      sandbox_environment=$again
+    fi
+  fi
+  if ! railway_id "$sandbox_environment"; then
+    disable_railway_computers "the separate sandbox environment could not be found or created (token type or permissions?)"
+    return 0
+  fi
+  if [ "$sandbox_environment" = "$app_environment" ]; then
+    disable_railway_computers "the sandbox environment must not be this application's environment"
+    return 0
+  fi
+  export RAILWAY_ENVIRONMENT_ID="$sandbox_environment"
+  unset RAILWAY_SANDBOX_ENVIRONMENT_ID
+  log "computers: Railway sandboxes in environment $sandbox_environment (the app runs in $app_environment)"
+}
+
+# Secrets only the pre-deploy step uses.
+scrub_runtime_environment() {
+  unset DATABASE_MIGRATION_URL OWNER_PASSWORD OWNER_EMAIL
+}
+
+migrate_once() {
+  (cd "$APP/apps/api" && as_node node --enable-source-maps dist/cli/migrate-database.js)
+}
+
+bootstrap_once() {
+  (
+    unset DATABASE_MIGRATION_URL
+    cd "$APP/apps/api" && as_node node --enable-source-maps dist/cli/bootstrap-owner.js
+  )
+}
+
+predeploy() {
+  [ -n "${DATABASE_URL-}" ] || die "DATABASE_URL (the app login) is empty"
+  [ -n "${DATABASE_MIGRATION_URL-}" ] || die "DATABASE_MIGRATION_URL (the database owner) is empty"
+  wait_seconds=${RAKAZO_DB_WAIT_SECONDS:-600}
+  positive_int "$wait_seconds" || wait_seconds=600
+  as_node node "$HERE/wait-ready.mjs" DATABASE_MIGRATION_URL "$wait_seconds" ||
+    die "Postgres did not accept connections within $wait_seconds s"
+  retry 5 15 "database migrations" migrate_once || die "database migrations failed"
+  if [ -z "${OWNER_EMAIL-}" ]; then
+    log "OWNER_EMAIL is empty: no account is created (public sign-up stays as SIGNUPS_ENABLED says)"
+    return 0
+  fi
+  retry 3 10 "owner account bootstrap" bootstrap_once ||
+    die "owner account bootstrap failed (OWNER_PASSWORD needs 16+ characters; an existing unverified account must have the same password)"
+  log "pre-deploy done: schema migrated, owner account ready"
+}
+
+api() {
+  port=${PORT:-3100}
+  if [ -z "${API_PORT-}" ]; then
+    export API_PORT="$port"
+  elif [ "$API_PORT" != "$port" ]; then
+    die "API_PORT ($API_PORT) must equal PORT ($port): Railway's healthcheck probes PORT"
+  fi
+  export API_HOST="${API_HOST:-::}"
+  unset_empty_optional
+  resolve_sandbox_environment
+  scrub_runtime_environment
+  cd "$APP/apps/api"
+  log "starting the Rakazo API on [$API_HOST]:$API_PORT"
+  exec_as_node node --enable-source-maps dist/index.js
+}
+
+worker() {
+  if [ -n "${RAKAZO_API_READY_URL-}" ]; then
+    wait_seconds=${RAKAZO_API_WAIT_SECONDS:-900}
+    positive_int "$wait_seconds" || wait_seconds=900
+    as_node node "$HERE/wait-ready.mjs" RAKAZO_API_READY_URL "$wait_seconds" ||
+      log "warning: the API is not ready yet; starting the worker anyway"
+  fi
+  unset_empty_optional
+  resolve_sandbox_environment
+  scrub_runtime_environment
+  cd "$APP/apps/worker"
+  log "starting the Rakazo worker"
+  exec_as_node node --enable-source-maps dist/index.js
+}
+
+# A start command may arrive as arguments to this entrypoint; drop our own path if so.
+case "${1-}" in
+  */rakazo-railway) shift ;;
+esac
+
+case "${1-}" in
+  predeploy) predeploy ;;
+  api) api ;;
+  worker) worker ;;
+  *) die "usage: rakazo-railway predeploy|api|worker" ;;
+esac
