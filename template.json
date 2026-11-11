@@ -1,5 +1,6 @@
 {
-  "name": "Rakazo v0.8 Persistent AI Teammates",
+  "name": "Rakazo Persistent AI Teammates",
+  "idSeed": "Rakazo v0.8 Persistent AI Teammates",
   "description": "Open-source AI teammates with memory, routines and their own computers.",
   "category": "AI/ML",
   "tags": [

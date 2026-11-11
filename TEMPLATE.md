@@ -1,10 +1,10 @@
-# Rakazo v0.8 Persistent AI Teammates: Railway template spec
+# Rakazo Persistent AI Teammates: Railway template spec
 
 ## Listing
 
 | Field | Value |
 |---|---|
-| Name | **Rakazo v0.8 Persistent AI Teammates** (`v0.8` from release `v0.8.0`, the pinned build; no third-party product names) |
+| Name | **Rakazo Persistent AI Teammates** (`v0.8` from release `v0.8.0`, the pinned build; no third-party product names) |
 | Description | Open-source AI teammates with memory, routines and their own computers. (71 chars) |
 | Category | AI/ML |
 | Tags | rakazo, ai-agents, ai-teammates, computer-use, sandboxes, self-hosted, postgres, grok-bot-alternative |
